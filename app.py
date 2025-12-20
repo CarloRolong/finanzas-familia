@@ -1,6 +1,7 @@
 import streamlit as st
 import pandas as pd
 import gspread
+import os
 from oauth2client.service_account import ServiceAccountCredentials
 from datetime import datetime
 from dateutil.relativedelta import relativedelta
@@ -9,6 +10,13 @@ import plotly.graph_objects as go
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Controle Financeiro", layout="wide")
+
+# --- 2. PEGA ESTE BLOQUE EXACTAMENTE AQUÍ ---
+if not os.path.exists("credentials.json"):
+    # Si no existe el archivo (nube), lo creamos usando el secreto
+    with open("credentials.json", "w") as f:
+        f.write(st.secrets["contenido_credenciales"])
+# ---------------------------------------------
 
 st.markdown("""
 <style>
@@ -230,4 +238,5 @@ try:
             st.dataframe(df_show.style.format({'Valor': "R$ {:,.2f}"}), use_container_width=True)
 
 except Exception as e:
+
     st.error(f"Erro: {e}")
