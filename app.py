@@ -28,7 +28,7 @@ st.markdown("""
 
 # --- GLOBALES (Compartidas entre Bot y Web) ---
 COLOR_MAP_BANCOS = {
-    'nubank': '#820AD1', 'bb': '#FFE600', 'inter': '#FF7A00', 'bradesco': "#BD8F98",
+    'nubank': '#820AD1', 'bb': '#FFE600', 'inter': '#FF7A00', 'bradesco': "#CC092F",
     'xp': '#000000', 'itau': '#EC7000', 'santander': '#EC0000'
 }
 COLOR_DEFAULT = '#808080'
@@ -446,6 +446,7 @@ try:
 
 except Exception as e:
     st.error(f"Erro: {e}")
+
 
 
 
