@@ -17,9 +17,9 @@ import plotly.express as px
 # ==============================================================================
 # 1. CONFIGURACIÓN INICIAL Y SEGURIDAD
 # ==============================================================================
-st.set_page_config(page_title="Controle Financeiro Familiar", layout="wide", page_icon="💰")
+st.set_page_config(page_title="Controle Financeiro", layout="wide", page_icon="💰")
 
-# Configuración de Matplotlib para el Bot (Backend seguro para servidores)
+# Configuración de Matplotlib para evitar errores de servidor
 plt.switch_backend('Agg')
 
 # --- RECUPERACIÓN DE CREDENCIALES (SISTEMA BLINDADO) ---
@@ -37,10 +37,10 @@ if not os.path.exists("credentials.json"):
         st.stop()
 
 # ==============================================================================
-# 2. CEREBRO DEL BOT DE TELEGRAM (EJECUCIÓN EN 2º PLANO)
+# 2. CEREBRO DEL BOT DE TELEGRAM (CÓDIGO COMPLETO)
 # ==============================================================================
 
-# Variables Globales del Bot
+# --- Variables Globales y Configuración ---
 TOKEN = st.secrets["TOKEN_TELEGRAM"]
 LISTA_BANCOS = ["Nubank", "Inter", "BB", "Bradesco"]
 LISTA_CATEGORIAS = ["Alimentação", "Transporte", "Lazer", "Casa", "Serviços", "Saúde", "Educação", "Pets", "Outros"]
@@ -49,13 +49,30 @@ TARJETAS_CONFIG = {"nubank": 4, "bb": 2, "inter": 6, "bradesco": 18}
 NOMBRE_HOJA = "Finanzas_Familia"
 TAB_REGISTROS = "Registros"
 TAB_PRESUPUESTO = "Orcamento"
-COLOR_MAP_BANCOS = {'nubank': '#820AD1', 'bb': '#FFE600', 'inter': '#FF7A00', 'bradesco': '#CC092F'}
 
-datos_temporales = {}
+# Colores Oficiales
+COLOR_MAP_BANCOS = {
+    'nubank': '#820AD1', 
+    'bb': '#FFE600', 
+    'inter': '#FF7A00', 
+    'bradesco': '#CC092F',
+    'xp': '#000000',
+    'itau': '#EC7000',
+    'santander': '#EC0000'
+}
+COLOR_DEFAULT = '#808080'
+
 bot = telebot.TeleBot(TOKEN)
+datos_temporales = {}
 
-# --- Funciones Auxiliares del Bot ---
-def limpiar_numero_bot(valor):
+# --- Funciones Auxiliares ---
+def conectar_sheet_bot(nombre_tab):
+    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
+    creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
+    client = gspread.authorize(creds)
+    return client.open(NOMBRE_HOJA).worksheet(nombre_tab)
+
+def limpiar_numero(valor):
     if isinstance(valor, (int, float)): return float(valor)
     valor_str = str(valor).strip().replace('R$', '').strip()
     if not valor_str: return 0.0
@@ -64,19 +81,14 @@ def limpiar_numero_bot(valor):
     except: return 0.0
 
 def calcular_primer_mes_pago(fecha_compra, nombre_banco):
-    nombre_banco = nombre_banco.lower()
+    nombre_banco = str(nombre_banco).lower().strip()
     dia_corte = TARJETAS_CONFIG.get(nombre_banco, 1)
     if fecha_compra.day > dia_corte:
         return fecha_compra + relativedelta(months=1)
     return fecha_compra
 
-def conectar_sheet_bot(nombre_tab):
-    scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
-    creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
-    client = gspread.authorize(creds)
-    return client.open(NOMBRE_HOJA).worksheet(nombre_tab)
+# --- Lógica de Menús y Handlers del Bot ---
 
-# --- Handlers del Bot (Menús y Lógica) ---
 @bot.message_handler(commands=['start', 'help'])
 @bot.message_handler(func=lambda m: m.text.lower() in ['oi', 'hola', 'olá'])
 def menu_principal(message):
@@ -121,7 +133,7 @@ def callback_handler(call):
 
 def paso_recibir_monto(message):
     try:
-        monto = limpiar_numero_bot(message.text)
+        monto = limpiar_numero(message.text)
         if monto == 0: raise ValueError
         datos_temporales[message.chat.id]['monto'] = monto
         markup = types.InlineKeyboardMarkup()
@@ -173,40 +185,109 @@ def guardar_gasto_final(chat_id):
         for i in range(cuotas):
             fecha = fecha_inicio + relativedelta(months=i)
             fila = [
-                datetime.now().strftime("%d/%m/%Y"), fecha.strftime("%m-%Y"), quien,
-                "Credito" if cuotas > 1 else "Debito", banco, monto_cuota,
-                cuotas, i + 1, cat, f"{cat} ({i+1}/{cuotas})"
+                datetime.now().strftime("%d/%m/%Y"),
+                fecha.strftime("%m-%Y"),
+                quien,
+                "Credito" if cuotas > 1 else "Debito",
+                banco,
+                monto_cuota,
+                cuotas,
+                i + 1,
+                cat,
+                f"{cat} ({i+1}/{cuotas})"
             ]
             filas.append(fila)
 
         sh = conectar_sheet_bot(TAB_REGISTROS)
         for f in filas: sh.append_row(f)
         
-        msg = f"✅ *Gasto Salvo*\n💲 R$ {monto:,.2f}\n🏦 {banco} - {quien}\n🏷️ {cat}"
+        msg = f"✅ *Salvo*\n💲 R$ {monto:,.2f}\n🏦 {banco} - {quien}\n🏷️ {cat}"
         bot.send_message(chat_id, msg, parse_mode="Markdown")
+        
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Novo Gasto", callback_data="menu_gasto"))
+        markup.add(types.InlineKeyboardButton("Novo", callback_data="menu_gasto"))
         bot.send_message(chat_id, "Mais alguma coisa?", reply_markup=markup)
     except Exception as e:
-        bot.send_message(chat_id, f"❌ Erro salvando: {e}")
+        bot.send_message(chat_id, f"❌ Erro: {e}")
 
 def generar_reporte(message):
-    # Reporte Simplificado para el Bot (Texto)
     try:
         sh_regs = conectar_sheet_bot(TAB_REGISTROS)
         df_r = pd.DataFrame(sh_regs.get_all_records())
+        
         if df_r.empty:
             bot.send_message(message.chat.id, "Sem dados.")
             return
-        
-        if 'Valor' in df_r.columns:
-            df_r['Valor'] = df_r['Valor'].apply(limpiar_numero_bot)
-            total = df_r['Valor'].sum()
-            bot.send_message(message.chat.id, f"📊 Total acumulado: R$ {total:,.2f}")
-    except Exception as e:
-        bot.send_message(message.chat.id, f"Erro: {e}")
 
-# --- INICIADOR DE HILO (THREAD) ---
+        # Limpieza básica
+        if 'Valor' in df_r.columns: df_r['Valor'] = df_r['Valor'].apply(limpiar_numero)
+        if 'Mes_Ref' in df_r.columns: df_r['Mes_Ref'] = df_r['Mes_Ref'].astype(str).str.strip()
+
+        # Cálculo de Faturas Abertas
+        grupos = df_r.groupby(['Banco', 'Quem']).size().reset_index()
+        hoy = datetime.now()
+        data_pie = {}
+        
+        for _, row in grupos.iterrows():
+            banco = row['Banco']
+            quien = row['Quem']
+            banco_key = str(banco).lower().strip()
+            
+            dia_corte = TARJETAS_CONFIG.get(banco_key, 1)
+            if hoy.day > dia_corte:
+                fecha_fatura = hoy + relativedelta(months=1)
+            else:
+                fecha_fatura = hoy
+            mes_fatura = fecha_fatura.strftime("%m-%Y")
+            
+            filtro = (df_r['Banco'] == banco) & (df_r['Quem'] == quien) & (df_r['Mes_Ref'] == mes_fatura)
+            total = df_r[filtro]['Valor'].sum()
+            
+            if total > 0:
+                label_completo = f"{banco} ({quien})"
+                data_pie[label_completo] = total
+        
+        if not data_pie:
+            bot.send_message(message.chat.id, "Tudo pago! Nenhuma fatura aberta hoje.")
+        else:
+            labels = list(data_pie.keys())
+            valores = list(data_pie.values())
+            colores = []
+            for lbl in labels:
+                color_encontrado = COLOR_DEFAULT
+                for b_key, b_color in COLOR_MAP_BANCOS.items():
+                    if b_key in lbl.lower():
+                        color_encontrado = b_color
+                        break
+                colores.append(color_encontrado)
+            
+            # Gráfico Dark Mode
+            plt.style.use('dark_background')
+            fig, ax = plt.subplots(figsize=(6, 6))
+            fig.patch.set_facecolor('#0E1117')
+            ax.set_facecolor('#0E1117')
+            
+            def func_fmt(pct, allvals):
+                absolute = int(round(pct/100.*sum(allvals)))
+                return f"R$ {absolute}"
+
+            wedges, texts, autotexts = ax.pie(
+                valores, labels=labels, autopct=lambda pct: func_fmt(pct, valores),
+                startangle=140, colors=colores, textprops={'color':"w"}
+            )
+            plt.setp(autotexts, size=10, weight="bold")
+            plt.title("💳 Faturas Abertas (Ao Vivo)", color='white', fontsize=14)
+            
+            buf = io.BytesIO()
+            plt.savefig(buf, format='png', facecolor='#0E1117')
+            buf.seek(0)
+            plt.close()
+            bot.send_photo(message.chat.id, photo=buf)
+            
+    except Exception as e:
+        bot.send_message(message.chat.id, f"Erro no relatório: {e}")
+
+# --- INICIADOR DE HILO (THREAD) PARA EL BOT ---
 def iniciar_bot():
     print("🤖 Bot iniciado en segundo plano...")
     try:
@@ -219,10 +300,9 @@ if not any(t.name == "ThreadBotTelegram" for t in threading.enumerate()):
     t.start()
 
 # ==============================================================================
-# 3. DASHBOARD WEB (LO QUE VES EN STREAMLIT)
+# 3. DASHBOARD WEB (VISUALIZACIÓN EN STREAMLIT)
 # ==============================================================================
 
-# Funciones de carga de datos para la Web
 def load_data():
     scope = ['https://spreadsheets.google.com/feeds', 'https://www.googleapis.com/auth/drive']
     creds = ServiceAccountCredentials.from_json_keyfile_name('credentials.json', scope)
@@ -230,59 +310,73 @@ def load_data():
     sh = client.open(NOMBRE_HOJA).worksheet(TAB_REGISTROS)
     data = sh.get_all_records()
     df = pd.DataFrame(data)
-    
-    # Limpieza de datos
     if not df.empty and 'Valor' in df.columns:
-        df['Valor'] = df['Valor'].apply(limpiar_numero_bot)
-        df['Data'] = pd.to_datetime(df['Data'], dayfirst=True, errors='coerce')
+        df['Valor'] = df['Valor'].apply(limpiar_numero)
+        # Normalizar para colores
+        df['Banco_Key'] = df['Banco'].str.lower().str.strip()
     return df
 
-# --- INTERFAZ VISUAL ---
-st.title("💰 Controle Financeiro da Família")
-st.markdown("---")
+st.title("📊 Painel Financeiro da Família")
+
+if st.button("🔄 Atualizar Dados"):
+    st.cache_data.clear()
 
 try:
-    if st.button("🔄 Actualizar Datos"):
-        st.cache_data.clear()
-        
     df = load_data()
     
     if df.empty:
-        st.warning("No hay datos registrados aún. ¡Usa el Bot de Telegram!")
+        st.info("Sem dados registrados ainda. Use o Bot no Telegram!")
     else:
-        # 1. KPIs Principales
-        col1, col2, col3 = st.columns(3)
-        total_gasto = df['Valor'].sum()
+        # --- KPIS ---
+        total = df['Valor'].sum()
         mes_actual = datetime.now().strftime("%m-%Y")
         gasto_mes = df[df['Mes_Ref'] == mes_actual]['Valor'].sum()
         
-        col1.metric("Gasto Total Histórico", f"R$ {total_gasto:,.2f}")
-        col2.metric(f"Gasto Mes Actual ({mes_actual})", f"R$ {gasto_mes:,.2f}")
-        col3.metric("Total Registros", len(df))
+        col1, col2 = st.columns(2)
+        col1.metric("Gasto Total Histórico", f"R$ {total:,.2f}")
+        col2.metric(f"Gasto Mes Atual ({mes_actual})", f"R$ {gasto_mes:,.2f}")
         
         st.markdown("---")
-        
-        # 2. Gráficos
+
+        # --- GRÁFICOS ---
         c1, c2 = st.columns(2)
         
-        # Gráfico de Barras: Categorías
-        gastos_cat = df.groupby('Categoria')['Valor'].sum().reset_index()
-        fig_cat = px.bar(gastos_cat, x='Categoria', y='Valor', title="Gastos por Categoría", color='Categoria')
-        c1.plotly_chart(fig_cat, use_container_width=True)
-        
-        # Gráfico de Pastel: Bancos
+        # 1. Donut Chart (Bancos con Colores Reales)
         gastos_banco = df.groupby('Banco')['Valor'].sum().reset_index()
-        fig_banco = px.pie(gastos_banco, values='Valor', names='Banco', title="Distribución por Banco", hole=0.4)
-        c2.plotly_chart(fig_banco, use_container_width=True)
+        # Mapeamos la columna 'Banco' a los colores usando el diccionario
+        # Nota: Ajustamos las llaves para que coincidan (minúsculas)
+        gastos_banco['Color'] = gastos_banco['Banco'].str.lower().str.strip().map(COLOR_MAP_BANCOS).fillna(COLOR_DEFAULT)
         
-        # 3. Tabla de Datos Recientes
-        st.subheader("📝 Últimos Registros")
-        st.dataframe(df.sort_values(by='Data', ascending=False).head(10), use_container_width=True)
+        fig_pie = px.pie(
+            gastos_banco, 
+            values='Valor', 
+            names='Banco', 
+            title='Distribuição por Banco',
+            hole=0.4,
+            color='Banco',
+            # Este mapa forza los colores correctos si el nombre coincide con la llave
+            color_discrete_map={k.title(): v for k, v in COLOR_MAP_BANCOS.items()} 
+        )
+        c1.plotly_chart(fig_pie, use_container_width=True)
+        
+        # 2. Bar Chart (Categorías)
+        gastos_cat = df.groupby('Categoria')['Valor'].sum().reset_index().sort_values('Valor', ascending=False)
+        fig_bar = px.bar(
+            gastos_cat, 
+            x='Categoria', 
+            y='Valor', 
+            title='Gastos por Categoria',
+            text_auto='.2s',
+            color='Categoria'
+        )
+        c2.plotly_chart(fig_bar, use_container_width=True)
+        
+        # --- TABLA ---
+        st.subheader("📝 Últimos 10 Registros")
+        st.dataframe(df.tail(10).sort_index(ascending=False), use_container_width=True)
 
 except Exception as e:
-    st.error(f"Error cargando el dashboard: {e}")
-    st.info("Intenta refrescar la página en unos segundos.")
-
+    st.error(f"Erro carregando o painel: {e}")
 
 
 
