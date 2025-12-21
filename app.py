@@ -7,9 +7,27 @@ from datetime import datetime
 from dateutil.relativedelta import relativedelta
 import plotly.express as px
 import plotly.graph_objects as go
+import base64
 
 # --- CONFIGURAÇÃO ---
 st.set_page_config(page_title="Controle Financeiro", layout="wide")
+
+# ==========================================
+# --- EL TRUCO DE SEGURIDAD (Desblindar) ---
+# ==========================================
+if not os.path.exists("credentials.json"):
+    try:
+        if "credenciales_seguras" in st.secrets:
+            # Decodificamos el secreto
+            decoded = base64.b64decode(st.secrets["credenciales_seguras"])
+            # Escribimos el archivo en el sistema
+            with open("credentials.json", "wb") as f:
+                f.write(decoded)
+        else:
+            st.warning("⚠️ No encontré el secreto 'credenciales_seguras'.")
+    except Exception as e:
+        st.error(f"Error creando credenciales: {e}")
+# ==========================================
 
 # --- 2. PEGA ESTE BLOQUE EXACTAMENTE AQUÍ ---
 if not os.path.exists("credentials.json"):
@@ -240,3 +258,4 @@ try:
 except Exception as e:
 
     st.error(f"Erro: {e}")
+
