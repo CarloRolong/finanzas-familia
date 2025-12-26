@@ -37,7 +37,7 @@ TARJETAS_CONFIG = {
     "nubank": 4, "bb": 2, "inter": 6, "bradesco": 18, "xp": 15
 }
 
-LISTA_BANCOS = ["Nubank", "Inter", "BB", "Bradesco", "XP", "Santander", "Itau"]
+LISTA_BANCOS = ["Nubank", "Inter", "BB", "Bradesco"]
 LISTA_CATEGORIAS = ["Alimentação", "Transporte", "Lazer", "Casa", "Serviços", "Saúde", "Educação", "Pets", "Outros"]
 LISTA_PERSONAS = ["Carlos", "Jessy"]
 
@@ -425,7 +425,7 @@ try:
     # --- TABLAS ---
     c3, c4 = st.columns(2)
     with c3:
-        st.subheader("🚦 Semáforo (Mês Selecionado)")
+        st.subheader("Orçamento vs Gastos (Mês Selecionado)")
         if not df_sem_show.empty:
             tbl = df_sem_show[['Categoria', 'Limite', 'Valor', 'Restante']].copy()
             for c in ['Limite', 'Valor', 'Restante']: tbl[c] = pd.to_numeric(tbl[c], errors='coerce').fillna(0.0)
@@ -446,6 +446,7 @@ try:
 
 except Exception as e:
     st.error(f"Erro: {e}")
+
 
 
 
