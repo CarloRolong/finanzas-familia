@@ -18,7 +18,7 @@ LISTA_BANCOS = ["Nubank", "Inter", "BB", "Bradesco"]
 LISTA_CATEGORIAS = ["Alimentação", "Transporte", "Lazer", "Casa", "Serviços", "Saúde", "Educação", "Pets", "Outros"]
 LISTA_PERSONAS = ["Carlos", "Jessy"]
 
-TARJETAS_CONFIG = {"nubank": 4, "bb": 2, "inter": 6, "bradesco": 18}
+TARJETAS_CONFIG = {"nubank": 4, "bb": 2, "inter": 6, "bradesco": 20}
 
 # Colores Oficiales (Igual al Dashboard)
 COLOR_MAP_BANCOS = {
@@ -26,9 +26,6 @@ COLOR_MAP_BANCOS = {
     'bb': '#FFE600', 
     'inter': '#FF7A00', 
     'bradesco': '#CC092F',
-    'xp': '#000000',
-    'itau': '#EC7000',
-    'santander': '#EC0000'
 }
 COLOR_DEFAULT = '#808080'
 
@@ -78,7 +75,7 @@ def callback_handler(call):
         generar_reporte(call.message)
     elif call.data == "menu_gasto":
         datos_temporales[chat_id] = {}
-        msg = bot.send_message(chat_id, "Digite o Valor (Ex: 50,00):", parse_mode="Markdown")
+        msg = bot.send_message(chat_id, "Digite o Valor:", parse_mode="Markdown")
         bot.register_next_step_handler(msg, paso_recibir_monto)
     elif call.data.startswith("tipo_"):
         tipo = call.data.split("_")[1]
@@ -317,4 +314,5 @@ def generar_reporte(message):
         bot.send_message(message.chat.id, f"Erro no relatório: {e}")
 
 print("🤖 BOT INICIADO...")
+
 bot.infinity_polling()
