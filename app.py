@@ -29,13 +29,12 @@ st.markdown("""
 # --- GLOBALES (Compartidas entre Bot y Web) ---
 COLOR_MAP_BANCOS = {
     'nubank': '#820AD1', 'bb': '#FFE600', 'inter': '#FF7A00', 'bradesco': "#CC092F",
-    'xp': '#000000', 'itau': '#EC7000', 'santander': '#EC0000',
     'pix': '#00BFA5' # <--- AGREGADO: Color Verde para PIX
 }
 COLOR_DEFAULT = '#808080'
 
 TARJETAS_CONFIG = {
-    "nubank": 4, "bb": 2, "inter": 6, "bradesco": 18, "xp": 15
+    "nubank": 4, "bb": 2, "inter": 6, "bradesco": 20
 }
 
 LISTA_BANCOS = ["Nubank", "Inter", "BB", "Bradesco"]
@@ -489,3 +488,4 @@ try:
 
 except Exception as e:
     st.error(f"Erro: {e}")
+
