@@ -29,7 +29,7 @@ st.markdown("""
 # --- GLOBALES (Compartidas entre Bot y Web) ---
 COLOR_MAP_BANCOS = {
     'nubank': '#820AD1', 'bb': '#FFE600', 'inter': '#FF7A00', 'bradesco': "#CC092F",
-    'pix': '#00BFA5' # <--- AGREGADO: Color Verde para PIX
+    'pix': '#00BFA5' # Color Verde para PIX
 }
 COLOR_DEFAULT = '#808080'
 
@@ -89,10 +89,9 @@ def limpiar_numero_bot(valor):
 def calcular_primer_mes_pago_bot(fecha_compra, nombre_banco):
     nombre_banco = str(nombre_banco).lower().strip()
     
-    # <--- AGREGADO: Lógica para PIX (Pago inmediato, fecha de hoy)
+    # Lógica para PIX (Pago inmediato)
     if nombre_banco == 'pix':
         return fecha_compra
-    # -------------------------------------------------------------
 
     dia_corte = TARJETAS_CONFIG.get(nombre_banco, 1)
     if fecha_compra.day > dia_corte:
@@ -115,6 +114,12 @@ def callback_handler(call):
     if call.data == "menu_reporte":
         bot.answer_callback_query(call.id, "Gerando...")
         generar_reporte_bot(call.message)
+
+    elif call.data == "menu_salir":
+        # NUEVO: Opción Salir
+        bot.answer_callback_query(call.id, "Fechado")
+        bot.send_message(chat_id, "👋 Sessão encerrada. Digite *Oi* quando quiser voltar!", parse_mode="Markdown")
+        datos_temporales.pop(chat_id, None) # Limpiar memoria para evitar errores
         
     elif call.data == "menu_gasto":
         datos_temporales[chat_id] = {}
@@ -124,13 +129,12 @@ def callback_handler(call):
     elif call.data.startswith("tipo_"):
         tipo = call.data.split("_")[1]
         
-        # <--- AGREGADO: Manejo de PIX
+        # Manejo de PIX
         if tipo == 'pix':
             datos_temporales[chat_id]['tipo'] = 'pix'
             datos_temporales[chat_id]['cuotas'] = 1
             datos_temporales[chat_id]['banco'] = 'PIX'
-            mostrar_menu_personas(chat_id) # Saltamos banco, vamos a Persona
-        # -----------------------------
+            mostrar_menu_personas(chat_id) 
         elif tipo == 'parcelado':
             datos_temporales[chat_id]['tipo'] = 'parcelado'
             msg = bot.send_message(chat_id, "Quantas Parcelas?")
@@ -164,7 +168,7 @@ def paso_recibir_monto(message):
         datos_temporales[message.chat.id]['monto'] = monto
         
         markup = types.InlineKeyboardMarkup()
-        # <--- AGREGADO: Botón PIX
+        # Botón PIX
         markup.add(types.InlineKeyboardButton("💠 PIX", callback_data="tipo_pix")) 
         markup.add(types.InlineKeyboardButton("💳 Crédito À Vista", callback_data="tipo_avista"),
                    types.InlineKeyboardButton("📅 Parcelado", callback_data="tipo_parcelado"))
@@ -215,12 +219,10 @@ def guardar_gasto_final(chat_id):
         for i in range(cuotas):
             fecha = fecha_inicio + relativedelta(months=i)
             
-            # <--- AGREGADO: Definir Tipo de Gasto
             if banco == 'PIX':
-                tipo_reg = "Debito" # PIX cuenta como débito/efectivo
+                tipo_reg = "Debito"
             else:
                 tipo_reg = "Credito" if cuotas > 1 else "Debito"
-            # -----------------------------------
 
             # ORDEN COLUMNAS: Data, Mes_Ref, Quem, Tipo, Banco, Valor, Parc, Parc_Atual, Cat, Desc
             fila = [
@@ -240,28 +242,33 @@ def guardar_gasto_final(chat_id):
         sh = conectar_sheet_bot(TAB_REGISTROS)
         for f in filas: sh.append_row(f)
         
-        # <--- AGREGADO: Icono dinámico
         icono_banco = "💠" if banco == 'PIX' else "🏦"
         msg = f"✅ *Salvo*\n💲 R$ {monto:,.2f}\n{icono_banco} {banco} - {quien}\n🏷️ {cat}"
         
         bot.send_message(chat_id, msg, parse_mode="Markdown")
+        
+        # --- NUEVO MENÚ FINAL CON 3 OPCIONES ---
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("Novo Gasto", callback_data="menu_gasto"))
+        # Fila 1: Nuevo y Reporte
+        markup.row(types.InlineKeyboardButton("➕ Novo Gasto", callback_data="menu_gasto"),
+                   types.InlineKeyboardButton("📄 Relatório", callback_data="menu_reporte"))
+        # Fila 2: Salir
+        markup.row(types.InlineKeyboardButton("❌ Sair", callback_data="menu_salir"))
+        
         bot.send_message(chat_id, "Mais alguma coisa?", reply_markup=markup)
+        
     except Exception as e:
         bot.send_message(chat_id, f"❌ Erro: {e}")
 
 def generar_reporte_bot(message):
     try:
-        # 1. Definir fecha y mes actual
+        # Reporte Avanzado (Comparativo con Presupuesto)
         hoy = datetime.now()
         mes_actual = hoy.strftime("%m-%Y")
         
-        # 2. Conectar a las hojas (Gastos y Presupuesto)
         sh_regs = conectar_sheet_bot(TAB_REGISTROS)
-        sh_orc = conectar_sheet_bot("Orcamento") # Asegúrate que tu hoja se llame así
+        sh_orc = conectar_sheet_bot("Orcamento")
         
-        # 3. Obtener datos
         df_r = pd.DataFrame(sh_regs.get_all_records())
         df_p = pd.DataFrame(sh_orc.get_all_records())
 
@@ -269,60 +276,47 @@ def generar_reporte_bot(message):
             bot.send_message(message.chat.id, "📭 Sem registros para analisar.")
             return
 
-        # 4. Limpieza de Números
         if 'Valor' in df_r.columns: df_r['Valor'] = df_r['Valor'].apply(limpiar_numero_bot)
         if 'Limite' in df_p.columns: df_p['Limite'] = df_p['Limite'].apply(limpiar_numero_bot)
         
-        # 5. FILTRAR GASTOS DEL MES ACTUAL
-        # (Esto incluye PIX de este mes + Cuotas de tarjeta que caen en este mes)
         gastos_mes = df_r[df_r['Mes_Ref'] == mes_actual].copy()
         
         if gastos_mes.empty:
             bot.send_message(message.chat.id, f"📅 Sem gastos registrados em {mes_actual}")
             return
 
-        # 6. Agrupar Gastos por Categoría
-        # Normalizamos nombres (quitamos espacios extra)
         gastos_mes['Categoria'] = gastos_mes['Categoria'].str.strip().str.title()
         gastos_por_cat = gastos_mes.groupby('Categoria')['Valor'].sum().reset_index()
 
-        # 7. Preparar Presupuesto
         if not df_p.empty:
             df_p['Categoria'] = df_p['Categoria'].str.strip().str.title()
-            # Unimos (Merge) los gastos con el presupuesto
             df_final = pd.merge(df_p, gastos_por_cat, on='Categoria', how='outer').fillna(0)
         else:
             df_final = gastos_por_cat
             df_final['Limite'] = 0
 
-        # 8. Construir el Mensaje
         msg = f"📊 *Análise Mensal ({mes_actual})*\n"
         msg += f"_(Gastos Cartão + PIX)_\n\n"
         
         total_gastado_mes = 0
-        df_final = df_final.sort_values(by='Valor', ascending=False) # Ordenar por mayor gasto
+        df_final = df_final.sort_values(by='Valor', ascending=False)
 
         for _, row in df_final.iterrows():
             cat = row['Categoria']
             gasto = float(row['Valor'])
             limite = float(row['Limite'])
             
-            if gasto == 0 and limite == 0: continue # Saltar vacíos
+            if gasto == 0 and limite == 0: continue
 
             total_gastado_mes += gasto
 
-            # Lógica de Semáforo
             if limite > 0:
-                # Tiene presupuesto asignado
                 porcentaje = (gasto / limite) * 100
                 if porcentaje <= 80: icono = "🟢"
                 elif porcentaje <= 100: icono = "🟡"
-                else: icono = "🔴" # Te pasaste
-                
+                else: icono = "🔴"
                 msg += f"{icono} *{cat}*\n      R$ {gasto:,.0f} / {limite:,.0f} ({porcentaje:.0f}%)\n"
-            
             elif gasto > 0:
-                # NO tiene presupuesto (Gasto extra)
                 msg += f"⚠️ *{cat}* (Sem Orçamento)\n      R$ {gasto:,.2f}\n"
 
         msg += "\n" + "─"*20 + "\n"
@@ -346,7 +340,7 @@ if not any(t.name == "ThreadBotTelegram" for t in threading.enumerate()):
     t.start()
 
 # ==============================================================================
-# 4. TU DASHBOARD WEB ORIGINAL (VISUALIZACIÓN)
+# 4. DASHBOARD WEB (VISUALIZACIÓN)
 # ==============================================================================
 
 def limpiar_numero(valor):
@@ -427,10 +421,9 @@ try:
         quien_real = row['Quem']
         banco_key = str(banco_real).lower().strip()
         
-        # <--- AGREGADO: Lógica Visual para PIX (Es Hoy)
+        # PIX es Hoy
         if banco_key == 'pix':
             fecha_fatura = hoy
-        # ----------------------------------------------
         else:
             # Calcular mes activo HOY (Tarjetas)
             dia_corte = TARJETAS_CONFIG.get(banco_key, 1)
@@ -450,7 +443,7 @@ try:
         if total > 0:
             datos_live_pie.append({'Banco': banco_real, 'Valor': total})
         
-        # Mostrar Tarjeta (Ocultamos PIX de las tarjetas físicas, pero lo dejamos en el gráfico)
+        # Mostrar Tarjeta (Ocultamos PIX de las métricas de tarjetas, pero queda en el gráfico)
         if banco_key != 'pix': 
             total_str = f"R$ {total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
             vencimiento = f"{dia_corte}/{fecha_fatura.strftime('%m')}"
@@ -468,7 +461,6 @@ try:
     st.sidebar.header("🔍 Filtros de Análise")
     meses = sorted(df_gastos['Mes_Ref'].unique())
     mes_actual = hoy.strftime("%m-%Y")
-    # Ordenar meses cronológicamente
     meses.sort(key=lambda x: datetime.strptime(x, "%m-%Y") if x else datetime.now())
     
     idx = meses.index(mes_actual) if mes_actual in meses else 0
