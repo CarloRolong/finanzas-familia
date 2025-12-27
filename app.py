@@ -252,19 +252,86 @@ def guardar_gasto_final(chat_id):
         bot.send_message(chat_id, f"❌ Erro: {e}")
 
 def generar_reporte_bot(message):
-    # Reporte rápido texto para el bot
     try:
+        # 1. Definir fecha y mes actual
+        hoy = datetime.now()
+        mes_actual = hoy.strftime("%m-%Y")
+        
+        # 2. Conectar a las hojas (Gastos y Presupuesto)
         sh_regs = conectar_sheet_bot(TAB_REGISTROS)
+        sh_orc = conectar_sheet_bot("Orcamento") # Asegúrate que tu hoja se llame así
+        
+        # 3. Obtener datos
         df_r = pd.DataFrame(sh_regs.get_all_records())
+        df_p = pd.DataFrame(sh_orc.get_all_records())
+
         if df_r.empty:
-            bot.send_message(message.chat.id, "Sem dados.")
+            bot.send_message(message.chat.id, "📭 Sem registros para analisar.")
             return
-        if 'Valor' in df_r.columns:
-            df_r['Valor'] = df_r['Valor'].apply(limpiar_numero_bot)
-            total = df_r['Valor'].sum()
-            bot.send_message(message.chat.id, f"📊 Total acumulado no sistema: R$ {total:,.2f}")
+
+        # 4. Limpieza de Números
+        if 'Valor' in df_r.columns: df_r['Valor'] = df_r['Valor'].apply(limpiar_numero_bot)
+        if 'Limite' in df_p.columns: df_p['Limite'] = df_p['Limite'].apply(limpiar_numero_bot)
+        
+        # 5. FILTRAR GASTOS DEL MES ACTUAL
+        # (Esto incluye PIX de este mes + Cuotas de tarjeta que caen en este mes)
+        gastos_mes = df_r[df_r['Mes_Ref'] == mes_actual].copy()
+        
+        if gastos_mes.empty:
+            bot.send_message(message.chat.id, f"📅 Sem gastos registrados em {mes_actual}")
+            return
+
+        # 6. Agrupar Gastos por Categoría
+        # Normalizamos nombres (quitamos espacios extra)
+        gastos_mes['Categoria'] = gastos_mes['Categoria'].str.strip().str.title()
+        gastos_por_cat = gastos_mes.groupby('Categoria')['Valor'].sum().reset_index()
+
+        # 7. Preparar Presupuesto
+        if not df_p.empty:
+            df_p['Categoria'] = df_p['Categoria'].str.strip().str.title()
+            # Unimos (Merge) los gastos con el presupuesto
+            df_final = pd.merge(df_p, gastos_por_cat, on='Categoria', how='outer').fillna(0)
+        else:
+            df_final = gastos_por_cat
+            df_final['Limite'] = 0
+
+        # 8. Construir el Mensaje
+        msg = f"📊 *Análise Mensal ({mes_actual})*\n"
+        msg += f"_(Gastos Cartão + PIX)_\n\n"
+        
+        total_gastado_mes = 0
+        df_final = df_final.sort_values(by='Valor', ascending=False) # Ordenar por mayor gasto
+
+        for _, row in df_final.iterrows():
+            cat = row['Categoria']
+            gasto = float(row['Valor'])
+            limite = float(row['Limite'])
+            
+            if gasto == 0 and limite == 0: continue # Saltar vacíos
+
+            total_gastado_mes += gasto
+
+            # Lógica de Semáforo
+            if limite > 0:
+                # Tiene presupuesto asignado
+                porcentaje = (gasto / limite) * 100
+                if porcentaje <= 80: icono = "🟢"
+                elif porcentaje <= 100: icono = "🟡"
+                else: icono = "🔴" # Te pasaste
+                
+                msg += f"{icono} *{cat}*\n      R$ {gasto:,.0f} / {limite:,.0f} ({porcentaje:.0f}%)\n"
+            
+            elif gasto > 0:
+                # NO tiene presupuesto (Gasto extra)
+                msg += f"⚠️ *{cat}* (Sem Orçamento)\n      R$ {gasto:,.2f}\n"
+
+        msg += "\n" + "─"*20 + "\n"
+        msg += f"💰 *TOTAL GASTO:* R$ {total_gastado_mes:,.2f}"
+
+        bot.send_message(message.chat.id, msg, parse_mode="Markdown")
+
     except Exception as e:
-        bot.send_message(message.chat.id, f"Erro: {e}")
+        bot.send_message(message.chat.id, f"❌ Erro ao gerar relatório: {e}")
 
 # --- INICIADOR HILO (THREAD) ---
 def iniciar_bot():
@@ -488,4 +555,5 @@ try:
 
 except Exception as e:
     st.error(f"Erro: {e}")
+
 
