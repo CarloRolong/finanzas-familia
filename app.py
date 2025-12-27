@@ -28,13 +28,12 @@ st.markdown("""
 
 # --- GLOBALES (Compartidas entre Bot y Web) ---
 COLOR_MAP_BANCOS = {
-    'nubank': '#820AD1', 'bb': '#FFE600', 'inter': '#FF7A00', 'bradesco': "#CC092F",
-    'xp': '#000000', 'itau': '#EC7000', 'santander': '#EC0000'
+    'nubank': '#820AD1', 'bb': '#FFE600', 'inter': '#FF7A00', 'bradesco': "#CC092F" # <--- AGREGADO: Color Verde para PIX
 }
 COLOR_DEFAULT = '#808080'
 
 TARJETAS_CONFIG = {
-    "nubank": 4, "bb": 2, "inter": 6, "bradesco": 18, "xp": 15
+    "nubank": 4, "bb": 2, "inter": 6, "bradesco": 20
 }
 
 LISTA_BANCOS = ["Nubank", "Inter", "BB", "Bradesco"]
@@ -88,6 +87,12 @@ def limpiar_numero_bot(valor):
 
 def calcular_primer_mes_pago_bot(fecha_compra, nombre_banco):
     nombre_banco = str(nombre_banco).lower().strip()
+    
+    # <--- AGREGADO: Lógica para PIX (Pago inmediato, fecha de hoy)
+    if nombre_banco == 'pix':
+        return fecha_compra
+    # -------------------------------------------------------------
+
     dia_corte = TARJETAS_CONFIG.get(nombre_banco, 1)
     if fecha_compra.day > dia_corte:
         return fecha_compra + relativedelta(months=1)
@@ -105,28 +110,43 @@ def menu_principal(message):
 @bot.callback_query_handler(func=lambda call: True)
 def callback_handler(call):
     chat_id = call.message.chat.id
+    
     if call.data == "menu_reporte":
         bot.answer_callback_query(call.id, "Gerando...")
         generar_reporte_bot(call.message)
+        
     elif call.data == "menu_gasto":
         datos_temporales[chat_id] = {}
         msg = bot.send_message(chat_id, "Digite o Valor (Ex: 50,00):")
         bot.register_next_step_handler(msg, paso_recibir_monto)
+        
     elif call.data.startswith("tipo_"):
         tipo = call.data.split("_")[1]
-        datos_temporales[chat_id]['tipo'] = tipo
-        if tipo == 'parcelado':
+        
+        # <--- AGREGADO: Manejo de PIX
+        if tipo == 'pix':
+            datos_temporales[chat_id]['tipo'] = 'pix'
+            datos_temporales[chat_id]['cuotas'] = 1
+            datos_temporales[chat_id]['banco'] = 'PIX'
+            mostrar_menu_personas(chat_id) # Saltamos banco, vamos a Persona
+        # -----------------------------
+        elif tipo == 'parcelado':
+            datos_temporales[chat_id]['tipo'] = 'parcelado'
             msg = bot.send_message(chat_id, "Quantas Parcelas?")
             bot.register_next_step_handler(msg, paso_recibir_cuotas)
-        else:
+        else: # Avista Credito
+            datos_temporales[chat_id]['tipo'] = 'avista'
             datos_temporales[chat_id]['cuotas'] = 1
             mostrar_menu_bancos(chat_id)
+            
     elif call.data.startswith("banco_"):
         datos_temporales[chat_id]['banco'] = call.data.split("_")[1]
         mostrar_menu_personas(chat_id)
+        
     elif call.data.startswith("quien_"):
         datos_temporales[chat_id]['quien'] = call.data.split("_")[1]
         mostrar_menu_categorias(chat_id)
+        
     elif call.data.startswith("cat_"):
         cat = call.data.split("_")[1]
         if cat == "Outros":
@@ -141,9 +161,13 @@ def paso_recibir_monto(message):
         monto = limpiar_numero_bot(message.text)
         if monto == 0: raise ValueError
         datos_temporales[message.chat.id]['monto'] = monto
+        
         markup = types.InlineKeyboardMarkup()
-        markup.add(types.InlineKeyboardButton("À Vista", callback_data="tipo_avista"),
-                   types.InlineKeyboardButton("Parcelado", callback_data="tipo_parcelado"))
+        # <--- AGREGADO: Botón PIX
+        markup.add(types.InlineKeyboardButton("💠 PIX", callback_data="tipo_pix")) 
+        markup.add(types.InlineKeyboardButton("💳 Crédito À Vista", callback_data="tipo_avista"),
+                   types.InlineKeyboardButton("📅 Parcelado", callback_data="tipo_parcelado"))
+                   
         bot.send_message(message.chat.id, f"✅ R$ {monto:,.2f}\nComo vai pagar?", reply_markup=markup)
     except:
         msg = bot.reply_to(message, "❌ Valor inválido.")
@@ -166,7 +190,7 @@ def mostrar_menu_bancos(chat_id):
 def mostrar_menu_personas(chat_id):
     markup = types.InlineKeyboardMarkup(row_width=2)
     markup.add(*[types.InlineKeyboardButton(p, callback_data=f"quien_{p}") for p in LISTA_PERSONAS])
-    bot.send_message(chat_id, "De quem é o cartão?", reply_markup=markup)
+    bot.send_message(chat_id, "Quem pagou?", reply_markup=markup)
 
 def mostrar_menu_categorias(chat_id):
     markup = types.InlineKeyboardMarkup(row_width=3)
@@ -189,12 +213,20 @@ def guardar_gasto_final(chat_id):
         filas = []
         for i in range(cuotas):
             fecha = fecha_inicio + relativedelta(months=i)
+            
+            # <--- AGREGADO: Definir Tipo de Gasto
+            if banco == 'PIX':
+                tipo_reg = "Debito" # PIX cuenta como débito/efectivo
+            else:
+                tipo_reg = "Credito" if cuotas > 1 else "Debito"
+            # -----------------------------------
+
             # ORDEN COLUMNAS: Data, Mes_Ref, Quem, Tipo, Banco, Valor, Parc, Parc_Atual, Cat, Desc
             fila = [
                 datetime.now().strftime("%d/%m/%Y"),
                 fecha.strftime("%m-%Y"),
                 quien,
-                "Credito" if cuotas > 1 else "Debito",
+                tipo_reg,
                 banco,
                 monto_cuota,
                 cuotas,
@@ -207,7 +239,10 @@ def guardar_gasto_final(chat_id):
         sh = conectar_sheet_bot(TAB_REGISTROS)
         for f in filas: sh.append_row(f)
         
-        msg = f"✅ *Salvo*\n💲 R$ {monto:,.2f}\n🏦 {banco} - {quien}\n🏷️ {cat}"
+        # <--- AGREGADO: Icono dinámico
+        icono_banco = "💠" if banco == 'PIX' else "🏦"
+        msg = f"✅ *Salvo*\n💲 R$ {monto:,.2f}\n{icono_banco} {banco} - {quien}\n🏷️ {cat}"
+        
         bot.send_message(chat_id, msg, parse_mode="Markdown")
         markup = types.InlineKeyboardMarkup()
         markup.add(types.InlineKeyboardButton("Novo Gasto", callback_data="menu_gasto"))
@@ -324,12 +359,17 @@ try:
         quien_real = row['Quem']
         banco_key = str(banco_real).lower().strip()
         
-        # Calcular mes activo HOY
-        dia_corte = TARJETAS_CONFIG.get(banco_key, 1)
-        if hoy.day > dia_corte:
-            fecha_fatura = hoy + relativedelta(months=1)
-        else:
+        # <--- AGREGADO: Lógica Visual para PIX (Es Hoy)
+        if banco_key == 'pix':
             fecha_fatura = hoy
+        # ----------------------------------------------
+        else:
+            # Calcular mes activo HOY (Tarjetas)
+            dia_corte = TARJETAS_CONFIG.get(banco_key, 1)
+            if hoy.day > dia_corte:
+                fecha_fatura = hoy + relativedelta(months=1)
+            else:
+                fecha_fatura = hoy
             
         mes_fatura_abierta = fecha_fatura.strftime("%m-%Y")
         
@@ -342,13 +382,14 @@ try:
         if total > 0:
             datos_live_pie.append({'Banco': banco_real, 'Valor': total})
         
-        # Mostrar Tarjeta
-        total_str = f"R$ {total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
-        vencimiento = f"{dia_corte}/{fecha_fatura.strftime('%m')}"
-        
-        with cols[col_idx % 4]:
-            st.metric(f"{banco_real} - {quien_real}", total_str, f"Fatura: {vencimiento}", delta_color="off")
-        col_idx += 1
+        # Mostrar Tarjeta (Ocultamos PIX de las tarjetas físicas, pero lo dejamos en el gráfico)
+        if banco_key != 'pix': 
+            total_str = f"R$ {total:,.2f}".replace(',', 'X').replace('.', ',').replace('X', '.')
+            vencimiento = f"{dia_corte}/{fecha_fatura.strftime('%m')}"
+            
+            with cols[col_idx % 4]:
+                st.metric(f"{banco_real} - {quien_real}", total_str, f"Fatura: {vencimiento}", delta_color="off")
+            col_idx += 1
     
     st.divider()
 
@@ -446,6 +487,7 @@ try:
 
 except Exception as e:
     st.error(f"Erro: {e}")
+
 
 
 
